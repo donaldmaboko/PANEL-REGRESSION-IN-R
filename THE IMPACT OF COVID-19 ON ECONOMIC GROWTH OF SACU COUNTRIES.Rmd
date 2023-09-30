@@ -1,0 +1,390 @@
+---
+title: "R commands"
+author: "Wame Mmolawa"
+date: "2023-05-18"
+output:
+  word_document: default
+  html_document: default
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+<br/>
+
+$\textbf{Data Analysis}$
+
+```{r warning=FALSE, results='hide', message=FALSE}
+#load packages
+load.lib <- c("readxl","sandwich","forecast","tseries","vars","urca","lmtest","tsDyn", "nortest","car","moments","tidyr","dplyr","aod","ggplot2","kableExtra","xts","quantmod","nnet","lawstat","TSA","strucchange","psych","ismev","gplots","timeSeries","Rcpp","plm","xtable","reshape2", "tinytex")
+install.lib <- load.lib[!load.lib %in% installed.packages()]
+for(lib in install.lib) install.packages(lib,dependencies=TRUE)
+sapply(load.lib,require,character=TRUE)
+```
+
+```{r}
+# Load the data
+mydata <- read_excel(file.choose(), sheet = "Data")
+head(mydata)
+```
+
+```{r}
+# Reshape the data
+sacu <- pivot_longer(data = mydata,
+cols=3:14,
+names_to = "year",
+values_to = "value")
+
+sacu<- sacu %>%
+pivot_wider(names_from = series.name, values_from = value)
+head(sacu)
+```
+
+```{r}
+# Transform variables to log scale
+sacu$lnGDP <- log(abs(sacu$GDP))
+sacu$lnGOVEXP <- log(abs(sacu$GOVEXP))
+sacu$lnTOP <- log(abs(sacu$TOP))
+sacu$lnFDI<- log(abs(sacu$FDI))
+sacu$lnINVEST <- log(abs(sacu$INVEST))
+sacu$lnEXCHRATE <- log(abs(sacu$EXCHRATE))
+sacu$lnINFLA <- log(abs(sacu$INFLA))
+```
+
+
+```{r}
+# Convert the sacu frame to a panel sacu object
+
+psacu <- pdata.frame(sacu, index=c("country", "year"))[,-(3:9)]
+
+# Create Lockdown dummy variable
+psacu$LOCK <- ifelse(psacu$year == 2020, 1, 0) 
+
+head(psacu)
+```
+
+<br/>
+
+
+$\textbf{Correlation}$
+
+Correlation between two variables determines if two variables are significantly linearly related and provide information on the strength and direction of the linear relationship between two variables. 
+
+The correlation coefficient, r, can take on values between -1 and 1.
+
+If r = 1, indicates there is a perfect positive correlation between variables.
+
+If r = 0, there is no linear relationship between the two variables
+
+If r = -1, indicates there is a perfect negative correlation between variables.
+
+```{r}
+# Correlation tests
+correlation  = cor(psacu[,-c(1,2)])
+correlation 
+```
+<br/>
+
+$\textbf{Heterogeneity}$
+
+```{r,warning=FALSE}
+# Exploring panel data
+coplot(lnGDP ~ year|country, type="b", data=psacu)
+plotmeans(lnGDP ~ country, main="Heterogeineity across countries", data=psacu)
+plotmeans(lnGDP ~ year, main="Heterogeineity across time", data=psacu)
+```
+
+<br/>
+
+$\textbf{Descriptive statistics}$
+
+```{r}
+# Descriptive statistics
+
+calculate_stats <- function(column) {
+  mean_val <- mean(column)
+  sd_val <- sd(column)
+  median_val <- median(column)
+  skewness_val <- skew(column)
+  kurtosis_val <- kurtosi(column)
+  
+  return(c(mean = mean_val, sd = sd_val, median = median_val, skewness = skewness_val, kurtosis = kurtosis_val))
+}
+t(sapply(psacu[,3:10], calculate_stats)) 
+```
+
+<br/>
+
+
+$\textbf{Separate the data into with and without lockdown}$
+
+```{r}
+plock = psacu
+psacu = psacu[,-10]
+```
+
+<br/>
+
+$\textbf{Estimation Model Of Panel Regression}$
+
+$\textbf{1. Common Effect Model/ Pooled Regression}$
+
+It is the simplest panel data model approach because it only combines time series data and cross sections. In this model, time and individual dimensions are not considered, so it is assumed that
+corporate data behavior is the same over various time periods. This method can use the Ordinary Least
+Square (OLS) approach or the least squares technique to estimate the panel data model.
+
+
+```{r}
+psacu.pool <- plm(lnGDP~lnGOVEXP+lnTOP+lnFDI+lnINVEST+lnEXCHRATE+lnINFLA, data = psacu, model = "pooling", index = c("country","year"))
+summary(psacu.pool)
+```
+For the overall model p-value less than 5%. When P-Value is less than or equal to 5%, it is statistically important. It indicates that there is strong evidence against the null hypothesis, or it simply states that there is less than a 5% probability that the null hypothesis is correct. 
+So here we can say that pooled OLS can be a good estimator but cannot accept it because pooled OLS does not consider the heterogeneity across airline firms or years.
+
+Individual effects of TOP,and EXCHRATE are also significant as p values are less than 5%. Here R2 is equal to 0.65409 which indicates a measure of fitness is good.
+
+Adjusted R2: It is more reliable and accurate for evaluation. As R2 increases even if insignificant predictors are added but Adjusted R2 decreases as insignificant predictors are added. It is mainly used when you compare a model that has a different number of variables.
+Here Adjusted R2 is equal to 0.61493 which indicates the model is reliable.
+
+Even if pooled OLS is having P-Value, less than 5% and R2 and Adjusted R2 indicates overall accuracy is excellent and the model is fit to use, we cannot rely on this model as it completely ignores heterogeneity.
+
+
+
+```{r}
+plock.pool <- plm(lnGDP~lnGOVEXP+lnTOP+lnFDI+lnINVEST+lnEXCHRATE+lnINFLA+LOCK, data = plock, model = "pooling", index = c("country","year"))
+summary(plock.pool)
+```
+
+<br/>
+
+$\textbf{2. Fixed Effect Model}$
+
+This model assumes that differences between individuals can be accommodated from their intercept
+differences. To estimate the Fixed Effects model panel data using variable dummy techniques to
+capture intercept differences between companies, intercept differences can occur due to differences in
+work culture, managerial, and incentives. However, the slopes are the same between companies. This
+estimation model is often called the Least Squares Dummy Variable (LSDV) technique.
+
+```{r}
+psacu.fe <- plm(lnGDP~lnGOVEXP+lnTOP+lnFDI+lnINVEST+lnEXCHRATE+lnINFLA, data = psacu, model = "within", index = c("country","year"))
+summary(psacu.fe)
+```
+
+```{r}
+plock.fe <- plm(lnGDP~lnGOVEXP+lnTOP+lnFDI+lnINVEST+lnEXCHRATE+lnINFLA+LOCK, data = plock, model = "within", index = c("country","year"))
+summary(plock.fe)
+```
+Overall model is good as the p-value less than 5%
+The individual effect of Q, PF, and LF are significant as the p-value is less than 5%.
+R2 and Adjusted R2: Value of R2 and Adjusted R2 are 0.92937 and 0.92239 respectively, which are less than pooled OLS and LSVD.
+
+<br/>
+
+$\textbf{3. Random Effect Model}$
+
+This model will estimate panel data where interruption variables may be interconnected between time
+and between individuals. In the Random Effect model, intercept differences are accommodated by the
+error terms of each company. The advantage of using the Random Effect model is to eliminate
+heteroscedasticity. This model is also called the Error Component Model (ECM) or the Generalized Least Square (GLS) technique
+
+```{r}
+psacu.re <- plm(lnGDP~lnGOVEXP+lnTOP+lnFDI+lnINVEST+lnEXCHRATE+lnINFLA, data = psacu, model = "random", index = c("country","year"),random.method = "walhus")
+summary(psacu.re)
+```
+```{r}
+plock.re <- plm(lnGDP~lnGOVEXP+lnTOP+lnFDI+lnINVEST+lnEXCHRATE+lnINFLA+LOCK, data = plock, model = "random", index = c("country","year"),random.method = "walhus")
+summary(plock.re)
+```
+Overall model is good as the p-value less than 5%
+The individual effect of Q, PF, and LF are significant as the p-value is less than 5%.
+R2 and Adjusted R2: The value of R2 and Adjusted R2 are 0.91129 and 0.9082, respectively
+
+<br/>
+
+$$\textbf{Selection of Panel Data Testing Method}$$
+$\textbf{Chow Test For Poolability}$
+
+Chow test is a test to determine the model of whether Pooled Effect or Fixed Effect (FE) is most appropriately used in estimating panel data. What is poolability? Poolability asks if slopes are the same across group or overtime. If the results state that they accept the null hypothesis, then the best model to
+use is the Common Effect Model. However, if the results state that they reject the null hypothesis
+then the best model used is the Fixed Effect Model, and the test will continue to the Hausman test.
+Chow test is a test to determine the Common Effect or Fixed Effect model that is most appropriate
+to be used in estimating panel data. The hypothesis in the chow test is:
+
+H0: Common Effect Model or pooled OLS
+
+H1: Fixed Effect Model
+
+
+```{r}
+pFtest(psacu.fe,psacu.pool)
+pFtest(plock.fe,plock.pool)
+```
+From the result above, we can see the p-value is below 0.05 so a fixed effect model is better for both data
+
+
+<br/>
+
+$\textbf{Hausman Test}$
+
+Hausman test is a test to determine the Fixed Effet or Random Effect model that is best used in
+estimating panel data. The hypothesis in the chow test is:
+
+H0: Random Effect Model
+
+H1: Fixed Effect Model
+
+If the Hausman Test results state that it accepts the null hypothesis, the best model to use is the
+Random Effect model. However, if the results state that they reject the null hypothesis, the best
+model used is the Fixed Effect model.
+
+```{r}
+phtest(psacu.fe, psacu.re)
+phtest(plock.fe, plock.re)
+```
+The random effect model is an appropriate estimator, meaning fixed effects are probably correlated with $Y_{it}$.
+
+
+
+<br/>
+
+$\textbf{Lagrange Multiplier Test}$
+
+Lagrange Multiplier Test Test or commonly referred to as Lagrangian Multiplier Test is an
+analysis performed with the aim to determine the best method in panel data regression, whether
+to use common effect or random effect. The Lagrange Multiplier test has a function to
+determine the best estimate, whether using a random effect or not.
+
+
+when doing data panel regression, namely :
+
+1. The Chow Test shows that the best method is the Common Effect of the fixed effect. So the
+next step to determine whether the Common Effect is better than the Random Effect, then
+the Lagrange Multiplier Test is required.
+
+2. The Hausman Test test shows that the best method is the Random effect of the Fixed
+Effect. So the next step to determine whether the Random Effect is better than the Common
+Effect, then the Lagrange Multiplier Test is required.
+
+
+```{r}
+plmtest(psacu.fe,effect = "twoways",type = "bp")
+plmtest(plock.fe,effect = "twoways",type = "bp")
+```
+From the results above, the p-value is below 0.05 for both models, so a random effect model is better for this data
+
+
+<br/>
+
+$\textbf{Diagnostic tests}$
+
+
+$\textbf{1. Test Of Serial Correlation}$
+
+Serial correlation is the relationship between a variable and a lagged version of itself over various time intervals.
+
+Serial correlation hypothesis test:
+
+H0: There is not serial correlation
+
+H1: There is serial correlation
+
+
+```{r}
+# Test Of Serial Correlation
+
+pbgtest(psacu.re)
+pbgtest(plock.re)
+```
+The result show that the p-value is less than 0.05 so there is serial correlation. Serial correlation tests apply to macro panels with long time series. Not a problem in micro panels (with very few years). Thus we can continue to use the data to construct our models.
+
+
+<br/>
+
+$\text{2. Heteroscedasticity}$
+
+Heteroskedasticity occurs for a linear relationship when the variance is not a constant and it increases as the predictor increases. In such cases, the standard error in the output cannot be relied on but still, coefficients will be unbiased. The best way to detect heteroskedasticity is by Graphical method or Breusch-Pagan (BP) test 
+
+Breusch-Pagan (BP) fits a linear regression model to the residuals of a linear regression model (by default the same explanatory variables are taken as in the main regression model) and rejects if too much of the variance is explained by the additional explanatory variables.
+
+For the BP test we assume there is no heteroscedasticity(is homoskedasticity) as a null hypothesis and the existence of heteroscedasticity as the alternative hypothesis.
+
+Under H0 the test statistic of the Breusch-Pagan test follows a chi-squared distribution with parameter (the number of regressors without the constant in the model) degrees of freedom.
+
+```{r, Heteroscedasticity Breusch-Pagan test}
+# Breusch-Pagan test
+bptest(psacu.re, data = psacu, studentize=F)
+bptest(plock.re, data = plock, studentize=F)
+```
+As the P-value of the BP test is less than 5%, indicates the variance is changing in the residual as the predictor value increases, thus we reject the null hypothesis. Therefore, there is heteroscedasticity in the data
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
